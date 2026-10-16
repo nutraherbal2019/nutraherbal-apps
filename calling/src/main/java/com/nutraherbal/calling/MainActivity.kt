@@ -15,7 +15,9 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.provider.CallLog
+import android.text.Editable
 import android.text.InputType
+import android.text.TextWatcher
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -27,6 +29,7 @@ import android.widget.ScrollView
 import android.widget.Spinner
 import android.widget.TextView
 import android.widget.Toast
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.text.SimpleDateFormat
@@ -131,7 +134,7 @@ class MainActivity : Activity() {
 
     private fun hasPerm(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
     private fun askPerms() {
-        val need = listOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_CALL_LOG, Manifest.permission.RECORD_AUDIO).filter { !hasPerm(it) }
+        val need = listOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_CONTACTS, Manifest.permission.RECORD_AUDIO).filter { !hasPerm(it) }
         if (need.isNotEmpty() && Build.VERSION.SDK_INT >= 23) requestPermissions(need.toTypedArray(), 11)
     }
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
@@ -163,7 +166,7 @@ class MainActivity : Activity() {
             msg.setTextColor(grey); msg.text = "Connecting…"
             bg {
                 try {
-                    val r = Api.post(base, "", JSONObject().put("op", "pair").put("code", cd).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL).put("appVersion", "1.0"))
+                    val r = Api.post(base, "", JSONObject().put("op", "pair").put("code", cd).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL).put("appVersion", "1.1"))
                     store.base = base
                     store.token = r.getString("token")
                     store.userName = r.getJSONObject("user").optString("name")
@@ -182,10 +185,19 @@ class MainActivity : Activity() {
         showPair()
     }
 
-    // ------------------------------------------------------------------ home
+    // ------------------------------------------------------------------ home (tabs: Today · Recents · Contacts · Keypad)
+    private var tab = 0
+    private var recFilter = 0
+    private var contactQuery = ""
+    private var contactLimit = 60
+    private var contacts: List<ContactRow>? = null
+    private val contactNames = HashMap<String, String>()
+    private val crmNames = HashMap<String, String>()
+    private var permsAsked = false
+
     private fun showHome() {
         root.removeAllViews()
-        askPerms()
+        if (!permsAsked) { permsAsked = true; askPerms() }
         val head = LinearLayout(this)
         head.orientation = LinearLayout.HORIZONTAL
         head.gravity = Gravity.CENTER_VERTICAL
@@ -194,33 +206,242 @@ class MainActivity : Activity() {
         title.addView(text("NH Calling", 22f, true, green))
         title.addView(text("Signed in as " + store.userName, 13f, false, grey))
         head.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-        head.addView(button("Refresh", false) { showHome() })
+        head.addView(button("Refresh", false) { contacts = null; crmNames.clear(); showHome() })
         root.addView(head)
 
-        // dial any number
+        val bar = LinearLayout(this)
+        bar.orientation = LinearLayout.HORIZONTAL
+        val barLp = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+        barLp.setMargins(0, dp(10), 0, dp(10))
+        val tabNames = listOf("Today", "Recents", "Contacts", "Keypad")
+        for (i in tabNames.indices) {
+            val b = button(tabNames[i], i == tab) { tab = i; showHome() }
+            b.textSize = 13f
+            b.setPadding(dp(4), 0, dp(4), 0)
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            lp.setMargins(dp(2), 0, dp(2), 0)
+            bar.addView(b, lp)
+        }
+        root.addView(bar, barLp)
+
+        when (tab) {
+            1 -> tabRecents()
+            2 -> tabContacts()
+            3 -> tabKeypad()
+            else -> tabToday()
+        }
+    }
+
+    // ---- one row of a list: icon, name, small line, CRM badge, Call button ----
+    private fun callRow(icon: String, iconColor: Int, title: String, sub: String, subColor: Int, number: String, name: String, badges: MutableList<Pair<String, TextView>>): LinearLayout {
+        val row = LinearLayout(this)
+        row.orientation = LinearLayout.HORIZONTAL
+        row.gravity = Gravity.CENTER_VERTICAL
+        row.setPadding(0, dp(7), 0, dp(7))
+        row.addView(text(icon, 18f, true, iconColor), LinearLayout.LayoutParams(dp(28), ViewGroup.LayoutParams.WRAP_CONTENT))
+        val col = LinearLayout(this)
+        col.orientation = LinearLayout.VERTICAL
+        col.addView(text(title, 15f, true))
+        col.addView(text(sub, 12f, false, subColor))
+        val badge = text("", 11f, true, green)
+        badge.visibility = View.GONE
+        col.addView(badge)
+        badges.add(Pair(number, badge))
+        row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        row.addView(button("Call") { callFlow(number, name) })
+        row.setOnClickListener { callFlow(number, name) }
+        return row
+    }
+
+    /** Marks numbers that are clients in the CRM (one request for all the numbers on screen). */
+    private fun attachBadges(list: List<Pair<String, TextView>>) {
+        val need = LinkedHashMap<String, String>()
+        for (p in list) {
+            val d = CallLogReader.digits(p.first)
+            if (d.length >= 10 && !crmNames.containsKey(d) && need.size < 60) need[d] = p.first
+        }
+        val applyNow = {
+            for (p in list) {
+                val nm = crmNames[CallLogReader.digits(p.first)]
+                if (!nm.isNullOrEmpty()) { p.second.text = "CRM client · " + nm; p.second.visibility = View.VISIBLE }
+            }
+        }
+        if (need.isEmpty()) { applyNow(); return }
+        bg {
+            try {
+                val arr = JSONArray()
+                for (v in need.values) arr.put(v)
+                val r = Api.post(store.base, store.token, JSONObject().put("op", "lookupMany").put("mobiles", arr))
+                val found = r.optJSONArray("found") ?: JSONArray()
+                val names = HashMap<String, String>()
+                for (i in 0 until found.length()) {
+                    val o = found.getJSONObject(i)
+                    names[CallLogReader.digits(o.optString("mobile"))] = o.optString("name").ifEmpty { "client" }
+                }
+                ui.post {
+                    for (d in need.keys) crmNames[d] = names[d] ?: ""
+                    applyNow()
+                }
+            } catch (e: ApiException) {
+                if (e.code == "unauthenticated") ui.post { disconnected("This phone was disconnected in the CRM. Pair it again.") }
+            } catch (e: Exception) { /* badges are optional */ }
+        }
+    }
+
+    private fun loadContacts(after: () -> Unit) {
+        if (contacts != null || !hasPerm(Manifest.permission.READ_CONTACTS)) return
+        bg {
+            val l = Contacts.all(this)
+            ui.post {
+                contactNames.clear()
+                for (c in l) { val d = CallLogReader.digits(c.number); if (!contactNames.containsKey(d)) contactNames[d] = c.name }
+                contacts = l
+                after()
+            }
+        }
+    }
+
+    private fun permCard(message: String, label: String, perm: String, code: Int) {
+        val c = card()
+        c.addView(text(message, 14f))
+        c.addView(button(label) { if (Build.VERSION.SDK_INT >= 23) requestPermissions(arrayOf(perm), code) })
+        root.addView(c)
+    }
+
+    private fun fmtDur(sec: Int): String = if (sec <= 0) "0 s" else (sec / 60).toString() + ":" + (sec % 60).toString().padStart(2, '0')
+
+    // ---- Recents: incoming, outgoing and missed calls of the phone ----
+    private fun tabRecents() {
+        if (!hasPerm(Manifest.permission.READ_CALL_LOG)) {
+            permCard("Allow “Call logs” so your recent incoming, outgoing and missed calls appear here — tap one to call back.", "Allow call logs", Manifest.permission.READ_CALL_LOG, 13)
+            return
+        }
+        val chips = LinearLayout(this)
+        chips.orientation = LinearLayout.HORIZONTAL
+        val labels = listOf("All", "Incoming", "Outgoing", "Missed")
+        for (i in labels.indices) {
+            val b = button(labels[i], i == recFilter) { recFilter = i; showHome() }
+            b.textSize = 12f
+            b.setPadding(dp(2), 0, dp(2), 0)
+            val lp = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f)
+            lp.setMargins(dp(2), 0, dp(2), dp(8))
+            chips.addView(b, lp)
+        }
+        root.addView(chips)
+        val box = card()
+        root.addView(box)
+        fun fill() {
+            box.removeAllViews()
+            val rows = CallLogReader.rows(this, System.currentTimeMillis() - 30L * 86400000, null, 300).filter {
+                it.number.isNotEmpty() && when (recFilter) {
+                    1 -> it.type == CallLog.Calls.INCOMING_TYPE
+                    2 -> it.type == CallLog.Calls.OUTGOING_TYPE
+                    3 -> it.type == CallLog.Calls.MISSED_TYPE || it.type == CallLog.Calls.REJECTED_TYPE
+                    else -> true
+                }
+            }.take(80)
+            if (rows.isEmpty()) { box.addView(text("No calls in the last 30 days.", 13f, false, grey)); return }
+            val badges = ArrayList<Pair<String, TextView>>()
+            val fmt = SimpleDateFormat("d MMM, h:mm a", Locale.getDefault())
+            for (r in rows) {
+                val nm = if (r.name.isNotEmpty()) r.name else (contactNames[CallLogReader.digits(r.number)] ?: "")
+                val missed = r.type == CallLog.Calls.MISSED_TYPE || r.type == CallLog.Calls.REJECTED_TYPE
+                val icon = when (r.type) { CallLog.Calls.INCOMING_TYPE -> "↙"; CallLog.Calls.OUTGOING_TYPE -> "↗"; else -> "✕" }
+                val kind = when (r.type) { CallLog.Calls.INCOMING_TYPE -> "Incoming"; CallLog.Calls.OUTGOING_TYPE -> "Outgoing"; CallLog.Calls.REJECTED_TYPE -> "Rejected"; else -> "Missed" }
+                val sub = kind + " · " + fmt.format(Date(r.date)) + (if (!missed && r.durationSec > 0) " · " + fmtDur(r.durationSec) else "") + (if (nm.isNotEmpty()) " · " + r.number else "")
+                box.addView(callRow(icon, if (missed) Color.parseColor("#c62828") else green, if (nm.isNotEmpty()) nm else r.number, sub, if (missed) Color.parseColor("#c62828") else grey, r.number, nm, badges))
+            }
+            attachBadges(badges)
+        }
+        fill()
+        loadContacts { fill() }
+    }
+
+    // ---- Contacts: the phone's contact list, searchable ----
+    private fun tabContacts() {
+        if (!hasPerm(Manifest.permission.READ_CONTACTS)) {
+            permCard("Allow “Contacts” so your phone contacts appear here — no need to type any number.", "Allow contacts", Manifest.permission.READ_CONTACTS, 12)
+            return
+        }
+        val search = input("Search name or number")
+        search.setText(contactQuery)
+        root.addView(search)
+        val box = card()
+        (box.layoutParams as LinearLayout.LayoutParams).topMargin = dp(8)
+        root.addView(box)
+        fun fill() {
+            box.removeAllViews()
+            val all = contacts
+            if (all == null) { box.addView(text("Loading contacts…", 13f, false, grey)); return }
+            val q = contactQuery.trim().lowercase(Locale.getDefault())
+            val qd = q.filter { it.isDigit() }
+            val hits = all.filter { q.isEmpty() || it.name.lowercase(Locale.getDefault()).contains(q) || (qd.length >= 3 && CallLogReader.digits(it.number).contains(qd)) }
+            if (hits.isEmpty()) { box.addView(text("No contact found.", 13f, false, grey)); return }
+            val badges = ArrayList<Pair<String, TextView>>()
+            for (c in hits.take(contactLimit)) box.addView(callRow("☎", green, c.name, c.number, grey, c.number, c.name, badges))
+            if (hits.size > contactLimit) box.addView(button("Show more (" + (hits.size - contactLimit) + " more)", false) { contactLimit += 60; fill() })
+            attachBadges(badges)
+        }
+        search.addTextChangedListener(object : TextWatcher {
+            override fun afterTextChanged(s: Editable?) { contactQuery = s?.toString() ?: ""; contactLimit = 60; fill() }
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+        })
+        fill()
+        loadContacts { fill() }
+    }
+
+    // ---- Keypad: for a number that is in neither list ----
+    private fun tabKeypad() {
         val dial = card()
-        (dial.layoutParams as LinearLayout.LayoutParams).topMargin = dp(12)
-        dial.addView(text("Call a client", 16f, true))
+        dial.addView(text("Call any number", 16f, true))
         val num = input("Mobile number", InputType.TYPE_CLASS_PHONE)
         dial.addView(num)
-        val info = text("", 13f, false, grey)
-        dial.addView(info)
-        dial.addView(button("Check & call") {
+        dial.addView(button("Call") {
             val n = num.text.toString().trim()
-            if (n.filter { it.isDigit() }.length < 10) { info.text = "Enter a 10-digit mobile number."; return@button }
-            info.text = "Looking up…"
-            bg {
-                try {
-                    val r = Api.post(store.base, store.token, JSONObject().put("op", "lookup").put("mobile", n))
-                    ui.post {
-                        if (r.optBoolean("found")) startCall(n, r.optString("name"), "")
-                        else info.text = "This number is not in your clients in the CRM. Add the enquiry in the CRM first."
-                    }
-                } catch (e: ApiException) { ui.post { handleErr(e, info) } }
-            }
+            if (n.filter { it.isDigit() }.length < 10) { toast("Enter a 10-digit mobile number."); return@button }
+            callFlow(n, "")
         })
         root.addView(dial)
+        root.addView(text("Tip: use Recents or Contacts — you do not need to type numbers.", 12f, false, grey))
+    }
 
+    /** One tap = call. Clients of the CRM are saved with outcome / note / voice note afterwards; other numbers just call. */
+    private fun callFlow(number: String, name: String) {
+        val d = CallLogReader.digits(number)
+        val cached = crmNames[d]
+        if (cached != null) { afterLookup(number, name, cached); return }
+        toast("Checking client…")
+        bg {
+            try {
+                val r = Api.post(store.base, store.token, JSONObject().put("op", "lookup").put("mobile", number))
+                val nm = if (r.optBoolean("found")) r.optString("name").ifEmpty { "client" } else ""
+                ui.post { crmNames[d] = nm; afterLookup(number, name, nm) }
+            } catch (e: ApiException) {
+                ui.post { if (e.code == "unauthenticated") disconnected("This phone was disconnected in the CRM. Pair it again.") else toast(e.message ?: "Could not check the number.") }
+            }
+        }
+    }
+
+    private fun afterLookup(number: String, name: String, crmName: String) {
+        if (crmName.isNotEmpty()) { startCall(number, crmName, ""); return }
+        AlertDialog.Builder(this)
+            .setTitle(if (name.isNotEmpty()) name else number)
+            .setMessage("This number is not a client in your CRM, so this call will not be saved there.")
+            .setPositiveButton("Call anyway") { _, _ -> plainCall(number) }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun plainCall(number: String) {
+        val uri = Uri.parse("tel:" + number.filter { it.isDigit() || it == '+' })
+        try {
+            if (hasPerm(Manifest.permission.CALL_PHONE)) startActivity(Intent(Intent.ACTION_CALL, uri)) else startActivity(Intent(Intent.ACTION_DIAL, uri))
+        } catch (e: Exception) { toast("Could not start the call: " + (e.message ?: "")) }
+    }
+
+    // ---- Today: calls due from the CRM + calls not yet saved ----
+    private fun tabToday() {
         val queueBox = card()
         queueBox.addView(text("Today's calls", 16f, true))
         val qInfo = text("Loading…", 13f, false, grey)

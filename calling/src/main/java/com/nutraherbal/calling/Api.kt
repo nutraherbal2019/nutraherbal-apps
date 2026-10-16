@@ -34,6 +34,7 @@ object Api {
             c.doOutput = true
             c.setRequestProperty("Content-Type", "application/json")
             if (token.isNotEmpty()) c.setRequestProperty("Authorization", "Bearer $token")
+            if (token.isNotEmpty()) { c.setRequestProperty("X-NH-Token", token); body.put("token", token) }
             c.outputStream.use { it.write(body.toString().toByteArray(Charsets.UTF_8)) }
             return read(c)
         } catch (e: ApiException) {
@@ -54,11 +55,13 @@ object Api {
             c.doOutput = true
             c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
             c.setRequestProperty("Authorization", "Bearer $token")
+            c.setRequestProperty("X-NH-Token", token)
             val out = DataOutputStream(c.outputStream)
             fun field(name: String, value: String) {
                 out.writeBytes("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n")
             }
             field("op", "voice")
+            field("token", token)
             field("callId", callId)
             out.writeBytes("--$boundary\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"voice.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n")
             out.write(file.readBytes())
