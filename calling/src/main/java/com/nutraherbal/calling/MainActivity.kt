@@ -344,7 +344,7 @@ class MainActivity : Activity() {
             msg.setTextColor(grey); msg.text = "Connecting…"
             bg {
                 try {
-                    val r = Api.post(base, "", JSONObject().put("op", "pair").put("code", cd).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL).put("appVersion", "1.3"))
+                    val r = Api.post(base, "", JSONObject().put("op", "pair").put("code", cd).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL).put("appVersion", "1.4"))
                     store.base = base
                     store.token = r.getString("token")
                     store.userName = r.getJSONObject("user").optString("name")
@@ -1261,10 +1261,21 @@ class MainActivity : Activity() {
         pc.setPadding(dp(12), 0, 0, 0)
         pc.addView(text(store.userName, 17f, true))
         pc.addView(text(store.base, 12f, false, grey))
-        pc.addView(text("NH Calling 1.3", 12f, false, grey))
+        pc.addView(text("NH Calling 1.4", 12f, false, grey))
         pr.addView(pc, hp(1f))
         prof.addView(pr)
         root.addView(prof)
+
+        val wc = card()
+        wc.addView(text("WhatsApp calls (call log only)", 16f, true))
+        val wOn = WaCallListener.enabled(this)
+        wc.addView(text(if (wOn) "WhatsApp call log: ON ✔" else "WhatsApp call log: OFF", 13f, true, if (wOn) T.green else T.coral))
+        wc.addView(text("WhatsApp ki call ko record karna Android me possible nahi hai. Ye sirf note karta hai: kisko, kab, kitni der (aur missed). Awaaz record nahi hoti. Sirf CRM clients ki calls save hoti hain.", 12f, false, grey))
+        wc.addView(button(if (wOn) "Notification access settings" else "Allow notification access", !wOn) {
+            try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch (e: Exception) { toast("Open Settings → Notifications → Device & app notifications → NH Calling.") }
+        })
+        if (!wOn) wc.addView(text("Agar “Restricted setting” likha aaye: Settings → Apps → NH Calling → ⋮ → “Allow restricted settings”, phir dobara try karein.", 11f, false, grey))
+        root.addView(wc)
 
         val nc = card()
         nc.addView(text("Popup notifications & reminders", 16f, true))
