@@ -6,22 +6,47 @@
     <uses-permission android:name="android.permission.READ_CALL_LOG" />
     <uses-permission android:name="android.permission.READ_CONTACTS" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.VIBRATE" />
     <uses-feature android:name="android.hardware.telephony" android:required="false" />
 
     <application
         android:allowBackup="false"
-        android:icon="@android:drawable/sym_action_call"
+        android:icon="@drawable/ic_launcher"
         android:label="NH Calling"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!-- Any tel: link (CRM in the browser, WhatsApp, other apps) can be opened with NH Calling -->
+            <intent-filter>
+                <action android:name="android.intent.action.DIAL" />
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="tel" />
+            </intent-filter>
         </activity>
+
+        <!-- v1.3: reminder alarms, boot re-arm, background sync of alerts -->
+        <receiver android:name=".AlarmReceiver" android:exported="false" />
+        <receiver android:name=".BootReceiver" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+        <service android:name=".SyncService" android:exported="false" android:permission="android.permission.BIND_JOB_SERVICE" />
     </application>
 </manifest>

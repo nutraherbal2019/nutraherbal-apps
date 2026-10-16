@@ -44,30 +44,39 @@ object Api {
         }
     }
 
-    /** Multipart upload of the voice note. */
-    fun uploadVoice(base: String, token: String, callId: String, file: File): JSONObject {
+    /** Voice note (kept for older call sites). */
+    fun uploadVoice(base: String, token: String, callId: String, file: File): JSONObject = uploadAudio(base, token, "voice", callId, file)
+
+    /** Multipart upload of an audio file: op = "voice" (voice note) or "recording" (the phone's call recording). */
+    fun uploadAudio(base: String, token: String, op: String, callId: String, file: File): JSONObject {
         try {
             val boundary = "----nh" + System.currentTimeMillis()
+            val sb = StringBuilder()
+            fun field(name: String, value: String) {
+                sb.append("--").append(boundary).append("\r\nContent-Disposition: form-data; name=\"").append(name).append("\"\r\n\r\n").append(value).append("\r\n")
+            }
+            field("op", op)
+            field("token", token)
+            field("callId", callId)
+            val ext = file.name.substringAfterLast('.', "m4a")
+            sb.append("--").append(boundary).append("\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"").append(op).append(".").append(ext).append("\"\r\nContent-Type: application/octet-stream\r\n\r\n")
+            val head = sb.toString().toByteArray(Charsets.UTF_8)
+            val tail = ("\r\n--" + boundary + "--\r\n").toByteArray(Charsets.UTF_8)
             val c = URL(endpoint(base)).openConnection() as HttpURLConnection
             c.requestMethod = "POST"
             c.connectTimeout = 15000
-            c.readTimeout = 60000
+            c.readTimeout = 180000
             c.doOutput = true
+            c.setFixedLengthStreamingMode(head.size.toLong() + file.length() + tail.size.toLong())
             c.setRequestProperty("Content-Type", "multipart/form-data; boundary=$boundary")
             c.setRequestProperty("Authorization", "Bearer $token")
             c.setRequestProperty("X-NH-Token", token)
-            val out = DataOutputStream(c.outputStream)
-            fun field(name: String, value: String) {
-                out.writeBytes("--$boundary\r\nContent-Disposition: form-data; name=\"$name\"\r\n\r\n$value\r\n")
+            c.outputStream.use { out ->
+                out.write(head)
+                file.inputStream().use { ins -> ins.copyTo(out) }
+                out.write(tail)
+                out.flush()
             }
-            field("op", "voice")
-            field("token", token)
-            field("callId", callId)
-            out.writeBytes("--$boundary\r\nContent-Disposition: form-data; name=\"audio\"; filename=\"voice.m4a\"\r\nContent-Type: audio/mp4\r\n\r\n")
-            out.write(file.readBytes())
-            out.writeBytes("\r\n--$boundary--\r\n")
-            out.flush()
-            out.close()
             return read(c)
         } catch (e: ApiException) {
             throw e

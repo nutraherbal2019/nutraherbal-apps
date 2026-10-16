@@ -101,7 +101,19 @@ class MainActivity : Activity() {
                     try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (e: Exception) { /* ignore */ }
                     return true
                 }
-                // tel:, mailto:, whatsapp:, upi: …
+                // tel: → always the NH Calling app (not the phone's own dialer)
+                if (scheme == "tel") {
+                    try {
+                        val i = Intent(Intent.ACTION_VIEW, u)
+                        i.setPackage("com.nutraherbal.calling")
+                        startActivity(i)
+                    } catch (e: Exception) {
+                        android.widget.Toast.makeText(this@MainActivity, "Install the NH Calling app to call from here. Opening the phone dialer instead.", android.widget.Toast.LENGTH_LONG).show()
+                        try { startActivity(Intent(Intent.ACTION_DIAL, u)) } catch (e2: Exception) { /* no dialer */ }
+                    }
+                    return true
+                }
+                // mailto:, whatsapp:, upi: …
                 try { startActivity(Intent(Intent.ACTION_VIEW, u)) } catch (e: Exception) { /* no app to handle */ }
                 return true
             }

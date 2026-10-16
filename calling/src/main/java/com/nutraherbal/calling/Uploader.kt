@@ -27,6 +27,11 @@ object Uploader {
                     Api.uploadVoice(store.base, store.token, callId, File(voice))
                     File(voice).delete()
                 }
+                val rec = item.optString("rec", "")
+                if (rec.isNotEmpty() && File(rec).exists() && callId.isNotEmpty()) {
+                    Api.uploadAudio(store.base, store.token, "recording", callId, File(rec))
+                    File(rec).delete()
+                }
                 // done
             } catch (e: ApiException) {
                 if (e.network) { keep.put(item) }
