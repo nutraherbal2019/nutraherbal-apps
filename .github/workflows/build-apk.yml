@@ -5,6 +5,9 @@ on:
   push:
     branches: [ main, master ]
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-24.04
@@ -18,13 +21,40 @@ jobs:
         with:
           gradle-version: 8.9
       - name: Build both apps
-        run: gradle :calling:assembleRelease :crm:assembleRelease --no-daemon --stacktrace
+        run: gradle :calling:assembleRelease :crm:assembleRelease :calling:assembleTestkey :crm:assembleTestkey --no-daemon --stacktrace
       - name: Collect APKs
         run: |
           mkdir -p out
           cp calling/build/outputs/apk/release/calling-release.apk out/NH-Calling.apk
           cp crm/build/outputs/apk/release/crm-release.apk out/NH-CRM.apk
+          cp calling/build/outputs/apk/testkey/calling-testkey.apk out/NH-Calling-TEST.apk
+          cp crm/build/outputs/apk/testkey/crm-testkey.apk out/NH-CRM-TEST.apk
+      - name: Check APKs (signature, manifest, zip)
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "build-tools: $BT"
+          {
+            echo "## APK check"
+            for f in out/*.apk; do
+              echo; echo "### $f ($(stat -c %s "$f") bytes)"
+              echo '```'
+              "$BT/apksigner" verify --verbose --print-certs "$f" 2>&1 | head -20 || true
+              "$BT/aapt2" dump badging "$f" 2>&1 | grep -E "^package|sdkVersion|targetSdk|application-label:" | head -6 || true
+              unzip -tq "$f" 2>&1 | tail -1 || true
+              echo '```'
+            done
+          } | tee out/APK-CHECK.txt >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@v4
         with:
           name: NH-apks
-          path: out/*.apk
+          path: |
+            out/*.apk
+            out/APK-CHECK.txt
+      - name: Publish as Release (download directly on phone)
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "apk-${{ github.run_number }}" out/*.apk out/APK-CHECK.txt \
+            --title "NH apps build ${{ github.run_number }}" \
+            --notes "NH-Calling.apk and NH-CRM.apk are the normal apps. *-TEST.apk are test builds signed with a different key."
