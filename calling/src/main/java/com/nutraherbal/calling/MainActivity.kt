@@ -48,9 +48,9 @@ import java.util.Locale
 class MainActivity : Activity() {
     private lateinit var store: Store
     private val ui = Handler(Looper.getMainLooper())
-    private val green = T.green
-    private val ink = T.ink
-    private val grey = T.muted
+    private val green: Int get() = T.green
+    private val ink: Int get() = T.ink
+    private val grey: Int get() = T.muted
     private lateinit var root: LinearLayout
     private lateinit var headerBox: LinearLayout
     private lateinit var navBox: LinearLayout
@@ -77,6 +77,8 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = Store(this)
+        T.apply(T.isDark(this, store.themeMode))   // v1.5 dark mode — must happen before any screen is built
+        setTheme(if (T.dark) android.R.style.Theme_Material_NoActionBar else android.R.style.Theme_Material_Light_NoActionBar)
         try { window.statusBarColor = T.accentDark } catch (e: Exception) { /* cosmetic */ }
         val outer = LinearLayout(this)
         outer.orientation = LinearLayout.VERTICAL
@@ -120,6 +122,9 @@ class MainActivity : Activity() {
         super.onResume()
         if (!store.isPaired()) { setIntent(Intent()); showPair(); return }
         try { Sched.ensureJob(this) } catch (e: Exception) { /* background sync is optional */ }
+        val onceTab = store.openTabOnce
+        if (onceTab >= 0) { tab = onceTab; store.openTabOnce = -1 }
+        bg { refreshTags() }
         val openTab = intent?.getIntExtra("openTab", -1) ?: -1
         if (openTab >= 0) { tab = openTab; setIntent(Intent()) }
         val dialNumber = takeDialIntent()
@@ -294,10 +299,19 @@ class MainActivity : Activity() {
 
     private fun bg(run: () -> Unit) { Thread { try { run() } catch (e: Exception) { /* handled inside */ } }.start() }
 
+    /** v1.5 — keeps the call-tag list (set by the manager in the CRM) up to date on the phone. */
+    private fun refreshTags() {
+        try {
+            val r = Api.post(store.base, store.token, JSONObject().put("op", "me"))
+            val t = r.optJSONArray("tags")
+            if (t != null && t.length() > 0) store.tagsJson = t.toString()
+        } catch (e: Exception) { /* keep the cached list */ }
+    }
+
     private fun hasPerm(p: String) = checkSelfPermission(p) == PackageManager.PERMISSION_GRANTED
     private fun askPerms() {
         val list = ArrayList<String>()
-        list.add(Manifest.permission.CALL_PHONE); list.add(Manifest.permission.READ_CALL_LOG); list.add(Manifest.permission.READ_CONTACTS); list.add(Manifest.permission.RECORD_AUDIO)
+        list.add(Manifest.permission.CALL_PHONE); list.add(Manifest.permission.READ_CALL_LOG); list.add(Manifest.permission.READ_CONTACTS); list.add(Manifest.permission.RECORD_AUDIO); list.add(Manifest.permission.READ_PHONE_STATE)
         if (Build.VERSION.SDK_INT >= 33) list.add(Manifest.permission.POST_NOTIFICATIONS)
         val need = list.filter { !hasPerm(it) }
         if (need.isNotEmpty() && Build.VERSION.SDK_INT >= 23) requestPermissions(need.toTypedArray(), 11)
@@ -344,7 +358,7 @@ class MainActivity : Activity() {
             msg.setTextColor(grey); msg.text = "Connecting…"
             bg {
                 try {
-                    val r = Api.post(base, "", JSONObject().put("op", "pair").put("code", cd).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL).put("appVersion", "1.4"))
+                    val r = Api.post(base, "", JSONObject().put("op", "pair").put("code", cd).put("deviceName", Build.MANUFACTURER + " " + Build.MODEL).put("appVersion", "1.5"))
                     store.base = base
                     store.token = r.getString("token")
                     store.userName = r.getJSONObject("user").optString("name")
@@ -1203,6 +1217,19 @@ class MainActivity : Activity() {
             body.addView(c)
         }
 
+        val tagStats = r.optJSONArray("tags")
+        if (tagStats != null && tagStats.length() > 0) {
+            val tc = card()
+            tc.addView(text("Call tags", 15f, true))
+            for (i in 0 until tagStats.length()) {
+                val o = tagStats.getJSONObject(i)
+                val tr = text("# " + o.optString("tag") + "  —  " + o.optInt("n"), 13f, false, ink)
+                tr.setPadding(0, dp(6), 0, 0)
+                tc.addView(tr)
+            }
+            body.addView(tc)
+        }
+
         val top = r.optJSONArray("topClients")
         if (top != null && top.length() > 0) {
             val c = card()
@@ -1261,21 +1288,36 @@ class MainActivity : Activity() {
         pc.setPadding(dp(12), 0, 0, 0)
         pc.addView(text(store.userName, 17f, true))
         pc.addView(text(store.base, 12f, false, grey))
-        pc.addView(text("NH Calling 1.4", 12f, false, grey))
+        pc.addView(text("NH Calling 1.5.0", 12f, false, grey))
         pr.addView(pc, hp(1f))
         prof.addView(pr)
         root.addView(prof)
 
+        // v1.4.1: WhatsApp call-log (notification access) is switched off — Google Play Protect blocks sideloaded apps that request it.
         val wc = card()
-        wc.addView(text("WhatsApp calls (call log only)", 16f, true))
-        val wOn = WaCallListener.enabled(this)
-        wc.addView(text(if (wOn) "WhatsApp call log: ON ✔" else "WhatsApp call log: OFF", 13f, true, if (wOn) T.green else T.coral))
-        wc.addView(text("WhatsApp ki call ko record karna Android me possible nahi hai. Ye sirf note karta hai: kisko, kab, kitni der (aur missed). Awaaz record nahi hoti. Sirf CRM clients ki calls save hoti hain.", 12f, false, grey))
-        wc.addView(button(if (wOn) "Notification access settings" else "Allow notification access", !wOn) {
-            try { startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) } catch (e: Exception) { toast("Open Settings → Notifications → Device & app notifications → NH Calling.") }
-        })
-        if (!wOn) wc.addView(text("Agar “Restricted setting” likha aaye: Settings → Apps → NH Calling → ⋮ → “Allow restricted settings”, phir dobara try karein.", 11f, false, grey))
+        wc.addView(text("WhatsApp calls", 16f, true))
+        wc.addView(text("Is version me WhatsApp call ka automatic log band hai (Google Play Protect aise apps ko install hone se rokta hai). Phone-SIM calls ka poora log pehle jaise chalta hai.", 12f, false, grey))
         root.addView(wc)
+
+        val ap = card()
+        ap.addView(text("Appearance", 16f, true))
+        val modeLabel = when (store.themeMode) { "dark" -> "Dark"; "light" -> "Light"; else -> "Automatic (follows the phone)" }
+        ap.addView(text("Theme: " + modeLabel, 13f, true, T.accent))
+        ap.addView(button("Change theme (Auto → Light → Dark)", false) {
+            store.themeMode = when (store.themeMode) { "auto" -> "light"; "light" -> "dark"; else -> "auto" }
+            store.openTabOnce = tab
+            recreate()
+        })
+        root.addView(ap)
+
+        val cid = card()
+        cid.addView(text("Incoming call pop-up (caller ID)", 16f, true))
+        cid.addView(text("Jab CRM ke kisi client ka call aata hai, popup me naam, stage, baaki rakam, pichhli call ka note/tags aur follow-up dikhta hai.", 12f, false, grey))
+        val phoneOk = Build.VERSION.SDK_INT < 23 || (hasPerm(Manifest.permission.READ_PHONE_STATE) && hasPerm(Manifest.permission.READ_CALL_LOG))
+        cid.addView(text(if (!phoneOk) "Permission needed" else if (store.callerIdOn) "ON ✔" else "OFF", 13f, true, if (phoneOk && store.callerIdOn) T.green else T.amber))
+        if (!phoneOk) cid.addView(button("Allow phone permission") { if (Build.VERSION.SDK_INT >= 23) requestPermissions(arrayOf(Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_CALL_LOG), 15) })
+        cid.addView(button(if (store.callerIdOn) "Turn off caller-ID pop-up" else "Turn on caller-ID pop-up", false) { store.callerIdOn = !store.callerIdOn; showHome() })
+        root.addView(cid)
 
         val nc = card()
         nc.addView(text("Popup notifications & reminders", 16f, true))
@@ -1461,6 +1503,12 @@ class MainActivity : Activity() {
                         val tv = text(line, 13f, true, ink)
                         tv.setPadding(0, dp(8), 0, 0)
                         box.addView(tv)
+                        val tagArr = c.optJSONArray("tags")
+                        if (tagArr != null && tagArr.length() > 0) {
+                            val tagParts = ArrayList<String>()
+                            for (k in 0 until tagArr.length()) tagParts.add(tagArr.optString(k))
+                            box.addView(text("# " + tagParts.joinToString("  # "), 12f, true, T.accent))
+                        }
                         if (c.optDouble("score") > 0) box.addView(text("AI rating " + c.optDouble("score") + "/10", 12f, true, if (c.optDouble("score") >= 7.0) T.green else if (c.optDouble("score") >= 4.5) T.amber else T.coral))
                         val sm = c.optString("summary").ifEmpty { c.optString("note") }
                         if (sm.isNotEmpty()) box.addView(text(sm, 12f, false, grey))
@@ -1562,6 +1610,33 @@ class MainActivity : Activity() {
         outcome.setSelection(if (dur > 0 && kind != "missed") 0 else 1)
         box.addView(text("Outcome", 12f, false, grey))
         box.addView(outcome)
+        val chosen = LinkedHashSet<String>()
+        val tagList = store.tags()
+        if (tagList.isNotEmpty()) {
+            val th = text("Tags (tap to select, up to 5)", 12f, false, grey)
+            th.setPadding(0, dp(8), 0, dp(4))
+            box.addView(th)
+            val flow = FlowLayout(this)
+            flow.gap = dp(6)
+            for (tg in tagList) {
+                val chip = TextView(this)
+                chip.text = tg
+                chip.textSize = 13f
+                chip.setPadding(dp(12), dp(6), dp(12), dp(6))
+                val paint = {
+                    val on = chosen.contains(tg)
+                    chip.setTextColor(if (on) Color.WHITE else T.accent)
+                    chip.background = T.round(this, if (on) T.accent else T.accentSoft, 16)
+                }
+                paint()
+                chip.setOnClickListener {
+                    if (chosen.contains(tg)) chosen.remove(tg) else if (chosen.size < 5) chosen.add(tg) else toast("Maximum 5 tags")
+                    paint()
+                }
+                flow.addView(chip)
+            }
+            box.addView(flow)
+        }
         val note = input("What was discussed? (short note)", InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_MULTI_LINE)
         note.minLines = 2
         box.addView(note)
@@ -1619,6 +1694,7 @@ class MainActivity : Activity() {
                     .put("durationSec", dur)
                     .put("outcome", outcomes[outcome.selectedItemPosition])
                     .put("note", note.text.toString().trim())
+                    .put("tags", JSONArray(chosen.toList()))
                     .put("nextAt", nextAtFor(next.selectedItemPosition))
                     .put("taskId", taskId)
                     .put("deviceCallId", "cl-" + (row?.id ?: ("m" + System.currentTimeMillis())))

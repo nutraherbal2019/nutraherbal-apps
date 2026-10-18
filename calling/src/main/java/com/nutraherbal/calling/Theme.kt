@@ -1,28 +1,51 @@
 package com.nutraherbal.calling
 
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 
 /** Colours of the Nutraherbal CRM (same tokens as the web app) so the phone app looks like the CRM. */
 object T {
-    val accent = Color.parseColor("#5B4CF0")
-    val accent2 = Color.parseColor("#8B5CF6")
-    val accentDark = Color.parseColor("#3F33C4")
-    val accentSoft = Color.parseColor("#ECEAFE")
-    val bg = Color.parseColor("#F4F5FB")
-    val surface = Color.WHITE
-    val ink = Color.parseColor("#1E2235")
-    val muted = Color.parseColor("#6B7088")
-    val line = Color.parseColor("#E4E6F0")
-    val green = Color.parseColor("#10B981")
-    val greenSoft = Color.parseColor("#DDF7EE")
-    val amber = Color.parseColor("#F59E0B")
-    val amberSoft = Color.parseColor("#FEF1D6")
-    val coral = Color.parseColor("#F43F5E")
-    val coralSoft = Color.parseColor("#FFE3E8")
-    val cyan = Color.parseColor("#0EA5C6")
-    val cyanSoft = Color.parseColor("#D9F3F9")
+    var accent = Color.parseColor("#5B4CF0")
+    var accent2 = Color.parseColor("#8B5CF6")
+    var accentDark = Color.parseColor("#3F33C4")
+    var accentSoft = Color.parseColor("#ECEAFE")
+    var bg = Color.parseColor("#F4F5FB")
+    var surface = Color.WHITE
+    var ink = Color.parseColor("#1E2235")
+    var muted = Color.parseColor("#6B7088")
+    var line = Color.parseColor("#E4E6F0")
+    var green = Color.parseColor("#10B981")
+    var greenSoft = Color.parseColor("#DDF7EE")
+    var amber = Color.parseColor("#F59E0B")
+    var amberSoft = Color.parseColor("#FEF1D6")
+    var coral = Color.parseColor("#F43F5E")
+    var coralSoft = Color.parseColor("#FFE3E8")
+    var cyan = Color.parseColor("#0EA5C6")
+    var cyanSoft = Color.parseColor("#D9F3F9")
+
+    /** v1.5 — dark mode. Colours are read when a screen is built, so the screen is rebuilt (recreate) after a change. */
+    var dark = false
+    fun isDark(ctx: Context, mode: String): Boolean = when (mode) {
+        "dark" -> true
+        "light" -> false
+        else -> (ctx.resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+    }
+    fun apply(d: Boolean) {
+        dark = d
+        if (d) {
+            accent = Color.parseColor("#7B6CFF"); accent2 = Color.parseColor("#9D7BFF"); accentDark = Color.parseColor("#1B1744"); accentSoft = Color.parseColor("#2B2766")
+            bg = Color.parseColor("#0F1220"); surface = Color.parseColor("#1A1E30"); ink = Color.parseColor("#E8EAF6"); muted = Color.parseColor("#9AA1BD"); line = Color.parseColor("#2C3150")
+            green = Color.parseColor("#34D399"); greenSoft = Color.parseColor("#0F3B2E"); amber = Color.parseColor("#FBBF24"); amberSoft = Color.parseColor("#40320F")
+            coral = Color.parseColor("#FB7185"); coralSoft = Color.parseColor("#4A1A26"); cyan = Color.parseColor("#22C3E6"); cyanSoft = Color.parseColor("#0F3A46")
+        } else {
+            accent = Color.parseColor("#5B4CF0"); accent2 = Color.parseColor("#8B5CF6"); accentDark = Color.parseColor("#3F33C4"); accentSoft = Color.parseColor("#ECEAFE")
+            bg = Color.parseColor("#F4F5FB"); surface = Color.WHITE; ink = Color.parseColor("#1E2235"); muted = Color.parseColor("#6B7088"); line = Color.parseColor("#E4E6F0")
+            green = Color.parseColor("#10B981"); greenSoft = Color.parseColor("#DDF7EE"); amber = Color.parseColor("#F59E0B"); amberSoft = Color.parseColor("#FEF1D6")
+            coral = Color.parseColor("#F43F5E"); coralSoft = Color.parseColor("#FFE3E8"); cyan = Color.parseColor("#0EA5C6"); cyanSoft = Color.parseColor("#D9F3F9")
+        }
+    }
 
     /** The CRM's gradient pairs g1..g5. */
     val grads = listOf(
