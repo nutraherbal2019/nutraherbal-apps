@@ -1288,7 +1288,7 @@ class MainActivity : Activity() {
         pc.setPadding(dp(12), 0, 0, 0)
         pc.addView(text(store.userName, 17f, true))
         pc.addView(text(store.base, 12f, false, grey))
-        pc.addView(text("NH Calling 1.5.0", 12f, false, grey))
+        pc.addView(text("NH Calling 1.5.1", 12f, false, grey))
         pr.addView(pc, hp(1f))
         prof.addView(pr)
         root.addView(prof)

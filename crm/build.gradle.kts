@@ -19,9 +19,6 @@ android {
             storePassword = "nutraherbal"
             keyAlias = "nh"
             keyPassword = "nutraherbal"
-            enableV1Signing = true   // old-style signature too (some phone installers still look for it)
-            enableV2Signing = true
-            enableV3Signing = true
         }
     }
     buildTypes {
@@ -30,15 +27,7 @@ android {
             signingConfig = signingConfigs.getByName("nh")
         }
         getByName("debug") { signingConfig = signingConfigs.getByName("nh") }
-        // Test build signed with Android's own standard debug key (used to find out whether
-        // an install problem is caused by the release key or by the APK itself).
-        create("testkey") {
-            initWith(getByName("debug"))
-            signingConfig = signingConfigs.getByName("debug")
-        }
     }
-    // Don't add the extra "dependency info" block to the APK signing block (some OEM installers choke on unknown blocks).
-    dependenciesInfo { includeInApk = false; includeInBundle = false }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
